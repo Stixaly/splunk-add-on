@@ -59,6 +59,24 @@ in [`.github/LABELS.md`](.github/LABELS.md). In short:
   ([`.github/labels.yml`](.github/labels.yml)).
 <!-- filigran-conventions:end -->
 
+## Running the tests
+
+The test suite needs neither Splunk nor OpenCTI. The add-on ships its own
+dependencies, so pytest is the only thing to install:
+
+```bash
+pip install -r tests/requirements.txt
+pytest
+```
+
+Every pull request runs the same suite on Python 3.9, 3.11 and 3.12, together
+with a byte-compile of the add-on modules and a parse of every `.conf` file.
+Coverage of the four modules the add-on owns has to stay at or above 90%.
+
+See [`tests/README.md`](tests/README.md) for the layout and for the two
+regression tables that have to be edited by hand when a behaviour changes on
+purpose.
+
 ## How can you get in touch for other questions?
 
 If you need support or wish to engage a discussion about the project, feel free

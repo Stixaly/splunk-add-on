@@ -16,11 +16,13 @@ class AlertActionWorkercreate_sighting(ModularAlertBase):
 
     def validate_params(self):
 
-        """
-        if not self.get_param("sighting_of"):
-            self.log_error('sighting_of is a mandatory parameter, but its value is None.')
+        if not self.get_param("sighting_of_value"):
+            self.log_error('sighting_of_value is a mandatory parameter, but its value is None.')
             return False
-        """
+
+        if not self.get_param("sighting_of_type"):
+            self.log_error('sighting_of_type is a mandatory parameter, but its value is None.')
+            return False
 
         return True
 

@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    name: Compile add-on sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Splunk 9 runs the add-on on Python 3.7, Splunk 10 on Python 3.9.
+      # The sources have to stay loadable by the oldest one still supported.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Byte-compile every add-on module
+        run: |
+          python -m compileall -q \
+            TA-opencti-add-on/bin/*.py \
+            TA-opencti-add-on/bin/ta_opencti_add_on/*.py
+
+  package:
+    name: Validate packaged configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Parse every .conf file
+        run: |
+          python - <<'PY'
+          import configparser, pathlib, sys
+
+          failed = False
+          for path in sorted(pathlib.Path("TA-opencti-add-on").rglob("*.conf")):
+              if "aob_py3" in path.parts:
+                  continue
+              parser = configparser.ConfigParser(strict=False)
+              try:
+                  parser.read(path, encoding="utf-8-sig")
+              except configparser.Error as error:
+                  print("::error file=%s::%s" % (path, error))
+                  failed = True
+                  continue
+              print("ok  %-52s %s" % (path, parser.sections()))
+          sys.exit(1 if failed else 0)
+          PY
+
+      - name: Check the app manifest and version
+        run: |
+          python - <<'PY'
+          import configparser, json, pathlib, sys
+
+          manifest = json.loads(pathlib.Path("TA-opencti-add-on/app.manifest").read_text())
+          app = configparser.ConfigParser(strict=False)
+          app.read("TA-opencti-add-on/default/app.conf", encoding="utf-8-sig")
+
+          manifest_version = manifest["info"]["id"]["version"]
+          app_version = app.get("launcher", "version", fallback=None)
+          print("app.manifest %s / app.conf %s" % (manifest_version, app_version))
+          if app_version and manifest_version != app_version:
+              print("::error::app.manifest and app.conf disagree on the version")
+              sys.exit(1)
+          PY
+
+  test:
+    name: Tests on Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is the Splunk 10 runtime, the others catch anything that would
+        # break on a newer interpreter.
+        python-version: ['3.9', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: tests/requirements.txt
+
+      - name: Install the test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tests/requirements.txt
+
+      - name: Unit tests
+        run: pytest tests/unit -v --junitxml=junit-unit-${{ matrix.python-version }}.xml
+
+      - name: Regression tests
+        run: pytest tests/regression -v --junitxml=junit-regression-${{ matrix.python-version }}.xml
+
+      - name: Upload the test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ matrix.python-version }}
+          path: junit-*.xml
+          if-no-files-found: ignore
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: tests/requirements.txt
+
+      - name: Install the test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tests/requirements.txt
+
+      # Only the modules the add-on owns are measured. The vendored libraries
+      # in aob_py3 are third party code that is shipped, not maintained here.
+      - name: Run the suite with coverage
+        run: |
+          pytest \
+            --cov=input_module_opencti_indicators \
+            --cov=stix_pattern \
+            --cov=stix_converter \
+            --cov=utils \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-fail-under=90
+
+      - name: Upload the coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore

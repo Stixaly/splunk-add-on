@@ -2,10 +2,43 @@ import stix2
 from datetime import datetime, timezone
 
 from stix_constants import CustomObservableUserAgent, CustomObservableText, CustomObjectCaseIncident
+from stix_constants import CustomObservableHostname
 from utils import get_hash_type, is_ipv6, is_ipv4
 from utils import generate_incident_id, generate_identity_id, generate_relation_id, generate_case_incident_id, generate_sighting_id
+from utils import generate_indicator_id
 
 FAKE_INDICATOR_ID = "indicator--51b92778-cef0-4a90-b7ec-ebd620d01ac8"
+
+# STIX pattern of each observable type an indicator can be built from
+STIX_PATTERNS = {
+    "ipv4": "[ipv4-addr:value = '{value}']",
+    "ipv6": "[ipv6-addr:value = '{value}']",
+    "domain": "[domain-name:value = '{value}']",
+    "url": "[url:value = '{value}']",
+    "hostname": "[hostname:value = '{value}']",
+    "email_addr": "[email-addr:value = '{value}']",
+    "user_agent": "[user-agent:value = '{value}']",
+    "file_name": "[file:name = '{value}']",
+    "md5": "[file:hashes.'MD5' = '{value}']",
+    "sha1": "[file:hashes.'SHA-1' = '{value}']",
+    "sha256": "[file:hashes.'SHA-256' = '{value}']",
+    "sha512": "[file:hashes.'SHA-512' = '{value}']",
+}
+
+
+def _build_stix_pattern(observable_type, value):
+    """Build the STIX pattern of an indicator out of an observable type/value
+
+    :param observable_type:
+    :param value:
+    :return:
+    """
+    if observable_type not in STIX_PATTERNS:
+        raise Exception(f"Unable to build a STIX pattern for type: {observable_type}")
+    # escape the characters that would otherwise break the pattern
+    escaped_value = str(value).replace("\\", "\\\\").replace("'", "\\'")
+    return STIX_PATTERNS[observable_type].format(value=escaped_value)
+
 
 def _get_stix_marking_id(value):
     if value == "tlp_clear":
@@ -64,7 +97,11 @@ def _extract_observables_from_cim_model(event, marking, creator):
         if is_ipv6(event.get("src_ip")):
             observables.append({"type": "ipv6", "value": event.get("src_ip")})
     if "file_hash" in event and event.get("file_hash") != "":
-        observables.append({"type": "hash", "value": event.get("file_hash")})
+        # the algorithm has to be resolved from the value, "hash" alone is not
+        # a type this converter knows and the observable would be dropped
+        hash_type = get_hash_type(event.get("file_hash"))
+        if hash_type:
+            observables.append({"type": hash_type, "value": event.get("file_hash")})
     if "file_name" in event and event.get("file_name") != "":
         observables.append({"type": "file_name", "value": event.get("file_name")})
 
@@ -140,6 +177,13 @@ def _convert_observables_to_stix(observables, marking, creator):
             stix_observables.append(stix_observable)
         if observable.get("type") == "domain":
             stix_observable = stix2.DomainName(
+                value=observable.get("value"),
+                object_marking_refs=[marking],
+                custom_properties=customer_properties
+            )
+            stix_observables.append(stix_observable)
+        if observable.get("type") == "hostname":
+            stix_observable = CustomObservableHostname(
                 value=observable.get("value"),
                 object_marking_refs=[marking],
                 custom_properties=customer_properties
@@ -238,13 +282,14 @@ def _convert_observables_to_stix(observables, marking, creator):
         if observable.get("type") == "email_message":
             stix_observable = stix2.EmailMessage(
                 subject=observable.get("value"),
+                is_multipart=False,
                 object_marking_refs=[marking],
                 custom_properties=customer_properties
             )
             stix_observables.append(stix_observable)
         if observable.get("type") == "mac_addr":
             stix_observable = stix2.MACAddress(
-                subject=observable.get("value"),
+                value=observable.get("value"),
                 object_marking_refs=[marking],
                 custom_properties=customer_properties
             )
@@ -456,7 +501,60 @@ def convert_to_sighting(alert_params, event):
     bundle_objects.append(where_sighted)
 
     # sighting_of conversion
-    if "_observable" in sighting_of_type:
+    # the sighting is attached either to an indicator or to an observable,
+    # depending on the type selected in the alert action
+    custom_properties = {}
+
+    if sighting_of_type == "indicator" or sighting_of_type.endswith("_indicator"):
+        observable_type = sighting_of_type.split("_indicator")[0]
+
+        if sighting_of_type == "indicator" and str(sighting_of_value).startswith("indicator--"):
+            # the indicator standard id comes straight from the OpenCTI lookup,
+            # the indicator already exists on the platform so it is only referenced
+            sighting_of_ref = str(sighting_of_value)
+        else:
+            if sighting_of_type == "indicator":
+                # the value is expected to be a STIX pattern
+                pattern = str(sighting_of_value)
+            else:
+                pattern = _build_stix_pattern(observable_type, sighting_of_value)
+
+            # the id is computed the OpenCTI way so that the sighting is attached
+            # to the existing indicator instead of creating a duplicate one
+            sighting_of_ref = generate_indicator_id(pattern)
+            stix_indicator = stix2.Indicator(
+                id=sighting_of_ref,
+                name=str(sighting_of_value),
+                pattern=pattern,
+                pattern_type="stix",
+                valid_from=event_date,
+                created_by_ref=stix_author.id,
+                object_marking_refs=[marking_id],
+                labels=alert_params.get("labels"),
+                allow_custom=True,
+            )
+            bundle_objects.append(stix_indicator)
+
+            # keep the observable in the bundle and link it to the indicator
+            if observable_type in STIX_PATTERNS:
+                stix_observables = _convert_observables_to_stix(
+                    observables=[{"type": observable_type, "value": sighting_of_value}],
+                    marking=marking_id,
+                    creator=stix_author
+                )
+                if stix_observables:
+                    stix_observable = stix_observables[0]
+                    bundle_objects.append(stix_observable)
+                    bundle_objects.append(stix2.Relationship(
+                        id=generate_relation_id(
+                            "based-on", sighting_of_ref, stix_observable["id"]),
+                        relationship_type="based-on",
+                        source_ref=sighting_of_ref,
+                        target_ref=stix_observable["id"],
+                        created_by_ref=stix_author.id
+                    ))
+
+    elif "_observable" in sighting_of_type:
         obs = {
             "type": sighting_of_type.split("_observable")[0],
             "value": sighting_of_value
@@ -467,31 +565,39 @@ def convert_to_sighting(alert_params, event):
             marking=marking_id,
             creator=stix_author
         )
+        if not stix_observables:
+            raise Exception(f"Unsupported sighting_of_type: {sighting_of_type}")
         stix_observable = stix_observables[0]
         bundle_objects.append(stix_observable)
 
-        sighting = stix2.Sighting(
-            id=generate_sighting_id(
-                stix_observable["id"],
-                where_sighted["id"],
-                #event_date,
-                #event_date,
-            ),
-            created_by_ref=stix_author.id,
-            description=None,
-            sighting_of_ref=FAKE_INDICATOR_ID,
-            first_seen=event_date,
-            last_seen=event_date,
-            where_sighted_refs=[where_sighted],
-            count=1,
-            object_marking_refs=[marking_id],
-            labels=alert_params.get("labels"),
-            custom_properties={
-                "x_opencti_sighting_of_ref": stix_observable["id"],
-            },
-        )
+        # OpenCTI resolves the sighting target through x_opencti_sighting_of_ref,
+        # sighting_of_ref only carries a placeholder indicator
+        sighting_of_ref = FAKE_INDICATOR_ID
+        custom_properties["x_opencti_sighting_of_ref"] = stix_observable["id"]
 
-        bundle_objects.append(sighting)
+    else:
+        raise Exception(f"Invalid sighting_of_type: {sighting_of_type}")
+
+    sighting = stix2.Sighting(
+        id=generate_sighting_id(
+            custom_properties.get("x_opencti_sighting_of_ref", sighting_of_ref),
+            where_sighted["id"],
+            #event_date,
+            #event_date,
+        ),
+        created_by_ref=stix_author.id,
+        description=None,
+        sighting_of_ref=sighting_of_ref,
+        first_seen=event_date,
+        last_seen=event_date,
+        where_sighted_refs=[where_sighted],
+        count=1,
+        object_marking_refs=[marking_id],
+        labels=alert_params.get("labels"),
+        custom_properties=custom_properties,
+    )
+
+    bundle_objects.append(sighting)
 
     bundle = stix2.Bundle(objects=bundle_objects, allow_custom=True)
     return bundle.serialize()

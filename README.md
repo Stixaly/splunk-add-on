@@ -96,6 +96,43 @@ You can also consult the "Indicators Dashboard" which gives an overview of the d
 
 The ingestion process can also be monitored by consulting the log file ```ta_opencti_add_on_opencti_indicators.log``` present in the directory ```$SPLUNK_HOME/var/log/splunk/```
 
+### Ingested indicators
+
+Only indicators whose `pattern_type` is `stix` are ingested. Indicators written in another
+language (`yara`, `sigma`, `snort`, `suricata`, `spl`, `eql`, ...) are skipped and reported in the log.
+
+A STIX pattern is ingested when it compares one of the attributes below with the `=` operator.
+The `type` field of the KV store is set to the value in the right-hand column:
+
+| Observable                                             | `type` in the KV store  |
+|--------------------------------------------------------|-------------------------|
+| `autonomous-system:number`                             | `autonomous-system`     |
+| `cryptocurrency-wallet:value`                          | `cryptocurrency-wallet` |
+| `directory:path`                                       | `directory`             |
+| `domain-name:value`                                    | `domain-name`           |
+| `email-addr:value`                                     | `email-addr`            |
+| `email-message:subject`                                | `email-message`         |
+| `file:hashes.'MD5' / 'SHA-1' / 'SHA-256' / 'SHA-512'`  | `md5` / `sha1` / `sha256` / `sha512` |
+| `file:name`                                            | `filename`              |
+| `hostname:value`                                       | `hostname`              |
+| `ipv4-addr:value`                                      | `ipv4-addr`             |
+| `ipv6-addr:value`                                      | `ipv6-addr`             |
+| `mac-addr:value`                                       | `mac-addr`              |
+| `mutex:name`                                           | `mutex`                 |
+| `phone-number:value`                                   | `phone-number`          |
+| `text:value`                                           | `text`                  |
+| `url:value`                                            | `url`                   |
+| `user-account:account_login` / `user_id`               | `user-account`          |
+| `user-agent:value`                                     | `user-agent`            |
+| `windows-registry-key:key`                             | `windows-registry-key`  |
+
+Patterns using another operator (`!=`, `LIKE`, `MATCHES`, `IN`) are not ingested, and are
+reported as an unsupported pattern in the log.
+
+> **Note:** an indicator is stored as a single KV store entry. When its pattern compares several
+> observables, for instance a file carrying both its MD5 and its SHA-256, only the first one is
+> kept in the lookup.
+
 
 ## OpenCTI custom alert actions
 
@@ -130,11 +167,23 @@ You can create an incident or an incident response case in OpenCTI from a custom
 | Parameter                | Description                                                   | Scope      |
 |--------------------------|---------------------------------------------------------------|------------|
 | `Sighting Of (value)`    | Value of what was sighted                                     | Sighting   |
-| `Sighting Of (type)`     | Type of what was sighted (URL, Domain, IPV4, IPV6)            | Sighting   |                              
+| `Sighting Of (type)`     | Type of what was sighted (see below)                          | Sighting   |                              
 | `Where Sighted (value)`  | Value of the 'System' or 'Organization' that saw the sighting | Sighting   |                              
 | `Where Sighted (type)`   | 'System' or 'Organization' that saw the sighting              | Sighting   | 
 | `Labels`                 | Labels (separated by a comma) to be applied                   | Sighting   | 
 | `TLP`                    | Markings to be applied                                        | Sighting   | 
+
+The `Sighting Of (type)` setting decides whether the sighting is attached to an **indicator** or to an **observable** in OpenCTI:
+
+| Type                                    | `Sighting Of (value)` expects                    | Sighting is attached to                                     |
+|-----------------------------------------|--------------------------------------------------|-------------------------------------------------------------|
+| `Indicator (OpenCTI id or STIX pattern)`| an indicator id (`indicator--...`) or a STIX pattern | the indicator itself                                     |
+| `URL / Domain / IPV4 / IPV6 / Hostname / Email Address / File Name / MD5 / SHA-1 / SHA-256 / SHA-512 Indicator` | the raw value | the indicator built from that value, also linked `based-on` the observable |
+| `URL / Domain / IPV4 / IPV6 Observable` | the raw value                                    | the observable only (behaviour of previous versions)         |
+
+Use one of the *Indicator* types to have the sighting counted on the IOC itself, which is what feeds the indicator decay and scoring in OpenCTI. The indicator id is derived the same way OpenCTI derives it, so the sighting attaches to the indicator that already exists on the platform instead of creating a duplicate.
+
+When the alert is driven by the `opencti_lookup` KV store, the cleanest option is `Indicator (OpenCTI id or STIX pattern)` with `Sighting Of (value)` set to the `id` field returned by the lookup, for example `$result.id$`.
 
 You can use [Splunk "tokens"](https://docs.splunk.com/Documentation/Splunk/9.2.2/Alert/EmailNotificationTokens#Result_tokens) as variables in the form to contextualize the data imported into OpenCTI.
 Tokens represent data that a search generates. They work as placeholders or variables for data values that populate when the search completes.

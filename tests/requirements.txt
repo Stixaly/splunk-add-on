@@ -1,0 +1,5 @@
+# Test-only dependencies. The add-on itself ships everything it needs in
+# TA-opencti-add-on/bin/ta_opencti_add_on/aob_py3, nothing from there is
+# installed here so the tests exercise the code Splunk actually runs.
+pytest>=7.0
+pytest-cov>=4.0

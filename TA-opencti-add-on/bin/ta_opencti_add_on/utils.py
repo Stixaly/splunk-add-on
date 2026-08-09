@@ -84,6 +84,21 @@ def generate_identity_id(name: str, identity_class: str):
     entity_id = str(uuid.uuid5(uuid.UUID("00abedb4-aa42-466c-9c01-fed23315a9b7"), data))
     return "identity--" + entity_id
 
+def generate_indicator_id(pattern: str):
+    """Generate the OpenCTI standard id of an indicator from its STIX pattern.
+
+    The id is derived from the pattern the same way OpenCTI does it, so the
+    sighting is attached to the indicator already present on the platform
+    instead of creating a duplicate one.
+
+    :param pattern:
+    :return:
+    """
+    data = {"pattern": pattern}
+    data = canonicalize(data, utf8=False)
+    entity_id = str(uuid.uuid5(uuid.UUID("00abedb4-aa42-466c-9c01-fed23315a9b7"), data))
+    return "indicator--" + entity_id
+
 def generate_incident_id(name: str, created):
     """
     :param name:

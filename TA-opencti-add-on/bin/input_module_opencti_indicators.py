@@ -24,21 +24,45 @@ def use_single_instance_mode():
     return True
 '''
 
+# Observable types ingested from the OpenCTI stream.
+# Each entry maps a STIX observable type to the attribute paths that can be
+# found in its pattern, and to the value stored in the "type" field of the
+# KV store. Patterns using a path that is not listed here are not ingested.
 SUPPORTED_TYPES = {
+    "autonomous-system": {"number": "autonomous-system"},
+    "cryptocurrency-wallet": {"value": "cryptocurrency-wallet"},
+    "directory": {"path": "directory"},
+    "domain-name": {"value": "domain-name"},
     "email-addr": {"value": "email-addr"},
-    "email-message": {"value": "email-message"},
+    # OpenCTI builds email-message patterns on the subject, not on a value
+    "email-message": {"subject": "email-message"},
+    "hostname": {"value": "hostname"},
     "ipv4-addr": {"value": "ipv4-addr"},
     "ipv6-addr": {"value": "ipv6-addr"},
-    "domain-name": {"value": "domain-name"},
-    "hostname": {"value": "hostname"},
+    "mac-addr": {"value": "mac-addr"},
+    "mutex": {"name": "mutex"},
+    "phone-number": {"value": "phone-number"},
+    "text": {"value": "text"},
     "url": {"value": "url"},
+    "user-account": {"account_login": "user-account", "user_id": "user-account"},
     "user-agent": {"value": "user-agent"},
-    "file": {"hashes.MD5": "md5", "hashes.SHA-1": "sha1", "hashes.SHA-256": "sha256", "name": "filename"},
+    "windows-registry-key": {"key": "windows-registry-key"},
+    "file": {
+        "hashes.MD5": "md5",
+        "hashes.SHA-1": "sha1",
+        "hashes.SHA-256": "sha256",
+        "hashes.SHA-512": "sha512",
+        "name": "filename",
+    },
 }
 
 MARKING_DEFs = {}
 
 IDENTITY_DEFs = {}
+
+# STIX attributes carrying a list of values. They must reach the KV store as
+# lists, otherwise indicators holding several values only keep one of them.
+MULTI_VALUED_ATTRIBUTES = ["labels", "indicator_types", "markings"]
 
 
 def date_now_z():
@@ -47,8 +71,8 @@ def date_now_z():
     :rtype: str
     """
     return (
-        datetime.utcnow()
-        .replace(microsecond=0, tzinfo=timezone.utc)
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z")
     )
@@ -91,6 +115,56 @@ def sanitize_key(key):
     return key.replace(".", ":").replace("'", "")
 
 
+def normalize_multi_valued(value):
+    """Normalize a STIX multi-valued attribute into a list of strings
+
+    OpenCTI sends those attributes as JSON arrays, but a single value may also
+    be received as a bare string. Returning a list in every case keeps all the
+    values through the KV store, and lets SPL treat the field as multivalued.
+
+    Args:
+        value: raw attribute value, list or scalar, possibly None
+
+    Returns:
+        list: cleaned list of values, empty when there is nothing to keep
+    """
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        value = [value]
+    return [str(item).strip() for item in value if item is not None and str(item).strip()]
+
+
+def unquote_stix_value(obj_value):
+    """Turn a STIX pattern string literal back into the value it represents
+
+    In a pattern, a value is wrapped in single quotes and both the backslash
+    and the single quote are escaped with a backslash. Those escapes have to be
+    removed, otherwise values such as a registry key or a directory path reach
+    the KV store with doubled backslashes and never match the Splunk events.
+
+    Args:
+        obj_value (str): literal as returned by the pattern parser
+
+    Returns:
+        str: the value itself
+    """
+    if len(obj_value) >= 2 and obj_value.startswith("'") and obj_value.endswith("'"):
+        obj_value = obj_value[1:-1]
+
+    value = []
+    escaped = False
+    for character in obj_value:
+        if escaped:
+            value.append(character)
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        else:
+            value.append(character)
+    return "".join(value)
+
+
 def parse_stix_pattern(stix_pattern):
     """
     :param stix_pattern:
@@ -102,12 +176,17 @@ def parse_stix_pattern(stix_pattern):
     ):
         for obj_path, obj_operator, obj_value in comparisons:
             if observable_type in SUPPORTED_TYPES:
+                # a path pointing into a list, such as protocols[*] or
+                # values[*].name, holds an index element which is not a string
+                # and can never match a supported attribute
+                if not all(isinstance(element, str) for element in obj_path):
+                    continue
                 obj_path = ".".join(obj_path)
                 if obj_path in SUPPORTED_TYPES[observable_type]:
                     if obj_operator == "=":
                         return {
                             "type": SUPPORTED_TYPES[observable_type][obj_path],
-                            "value": obj_value.strip("'")
+                            "value": unquote_stix_value(obj_value)
                         }
 
 
@@ -129,12 +208,19 @@ def enrich_payload(splunk_helper, payload):
             payload["created_by"] = org_name
 
     # parse marking_refs
+    markings = []
     for marking_ref_id in payload.get("object_marking_refs", []):
-        payload["markings"] = []
         if marking_ref_id is not None:
             marking_value = MARKING_DEFs.get(marking_ref_id, None)
             if marking_value is not None:
-                payload["markings"].append(marking_value)
+                markings.append(marking_value)
+    payload["markings"] = markings
+
+    # normalize the multi-valued attributes so that every value is kept
+    for multi_valued_attribute in MULTI_VALUED_ATTRIBUTES:
+        payload[multi_valued_attribute] = normalize_multi_valued(
+            payload.get(multi_valued_attribute)
+        )
 
     # parse stix pattern
     parsed_stix = parse_stix_pattern(payload['pattern'])
@@ -298,9 +384,13 @@ def collect_events(helper, ew):
     if state is None:
         helper.log_info("No state, going to initialize it")
         import_from = helper.get_arg('import_from')
-        recover_until = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        start_date = datetime.utcnow() - timedelta(days=int(import_from))
-        start_date_timestamp = int(datetime.timestamp(start_date)) * 1000
+        now = datetime.now(timezone.utc)
+        recover_until = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        # the date has to carry its timezone: timestamp() reads a naive
+        # datetime as local time, which shifted the start of the first
+        # collection by the offset of the Splunk server
+        start_date = now - timedelta(days=int(import_from))
+        start_date_timestamp = int(start_date.timestamp()) * 1000
         state = {"start_from": str(start_date_timestamp)+"-0", "recover_until": recover_until}
         helper.log_info(f"Initialized state: {state}")
     else:
@@ -331,7 +421,11 @@ def collect_events(helper, ew):
             try:
                 if msg.event in ["create", "update", "delete"]:
                     data = json.loads(msg.data)["data"]
-                    if data['type'] == "indicator" and data['pattern_type'] == "stix":
+                    if data['type'] == "indicator" and data.get('pattern_type') != "stix":
+                        helper.log_info(f"Skipped indicator, only stix patterns are ingested: "
+                                        f"{data.get('name')} - pattern_type: {data.get('pattern_type')}")
+
+                    if data['type'] == "indicator" and data.get('pattern_type') == "stix":
                         parsed_stix = enrich_payload(helper, data)
                         if parsed_stix is None:
                             helper.log_error(f"Unsupported indicator pattern: {data['name']} - {data['pattern']}")
@@ -374,6 +468,7 @@ def collect_events(helper, ew):
                     state["start_from"] = msg.id
                     helper.save_check_point(input_name, json.dumps(state))
             except Exception as ex:
+                helper.log_error(f"Error when processing message, reason: {ex}")
                 helper.log_debug(f"Error when processing message, reason: {ex}, msg: {msg}")
 
     except Exception as ex:

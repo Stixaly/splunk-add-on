@@ -298,7 +298,7 @@
 		"ds_R0rMZ4Ao": {
 			"type": "ds.search",
 			"options": {
-				"query": "| inputlookup opencti_lookup | stats count by labels",
+				"query": "| inputlookup opencti_lookup | mvexpand labels | stats count by labels",
 				"queryParameters": {
 					"earliest": "$global_time.earliest$",
 					"latest": "$global_time.latest$"

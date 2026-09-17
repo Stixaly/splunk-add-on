@@ -106,3 +106,79 @@ def test_relation_id_depends_on_the_direction():
     forward = utils.generate_relation_id("based-on", "indicator--a", "file--b")
     backward = utils.generate_relation_id("based-on", "file--b", "indicator--a")
     assert forward != backward
+
+
+# --------------------------------------------------------------------------
+# alert action parameters
+# --------------------------------------------------------------------------
+
+UTC = datetime.timezone.utc
+
+
+@pytest.mark.parametrize("value, expected", [
+    (None, 1),
+    ("", 1),
+    ("   ", 1),
+    ("12", 12),
+    (" 7 ", 7),
+    (3, 3),
+    ("0", 0),
+    ("12.0", 12),
+    ("1e3", 1000),
+])
+def test_parse_count(value, expected):
+    """The value comes from a Splunk token, so it is a string and may be empty."""
+    assert utils.parse_count(value) == expected
+
+
+def test_parse_count_default_is_configurable():
+    assert utils.parse_count("", default=5) == 5
+
+
+@pytest.mark.parametrize("value", ["abc", "12.5", "-1", "nan", "inf", True])
+def test_parse_count_rejects_what_is_not_a_whole_number(value):
+    with pytest.raises(Exception, match="Invalid count"):
+        utils.parse_count(value)
+
+
+@pytest.mark.parametrize("value, expected", [
+    # epoch seconds, the form of _time and of min(_time) / max(_time)
+    ("1754640000", datetime.datetime(2025, 8, 8, 8, 0, tzinfo=UTC)),
+    ("1754640000.500", datetime.datetime(2025, 8, 8, 8, 0, 0, 500000, tzinfo=UTC)),
+    (1754640000, datetime.datetime(2025, 8, 8, 8, 0, tzinfo=UTC)),
+    # ISO 8601, as strftime would write it
+    ("2025-08-08T08:00:00Z", datetime.datetime(2025, 8, 8, 8, 0, tzinfo=UTC)),
+    ("2025-08-08T08:00:00+00:00", datetime.datetime(2025, 8, 8, 8, 0, tzinfo=UTC)),
+    ("2025-08-08T10:00:00+0200", datetime.datetime(2025, 8, 8, 8, 0, tzinfo=UTC)),
+    ("2025-08-08 08:00:00.123", datetime.datetime(2025, 8, 8, 8, 0, 0, 123000, tzinfo=UTC)),
+    ("2025-08-08", datetime.datetime(2025, 8, 8, tzinfo=UTC)),
+])
+def test_parse_timestamp(value, expected):
+    assert utils.parse_timestamp(value) == expected
+
+
+@pytest.mark.parametrize("value", [None, "", "  "])
+def test_parse_timestamp_of_an_empty_value_is_none(value):
+    assert utils.parse_timestamp(value) is None
+
+
+def test_parse_timestamp_keeps_an_aware_datetime():
+    given = datetime.datetime(2025, 8, 8, 10, tzinfo=datetime.timezone(datetime.timedelta(hours=2)))
+    assert utils.parse_timestamp(given) == given
+
+
+def test_parse_timestamp_reads_a_naive_datetime_as_utc():
+    assert utils.parse_timestamp(datetime.datetime(2025, 8, 8, 8)) == \
+        datetime.datetime(2025, 8, 8, 8, tzinfo=UTC)
+
+
+def test_parse_timestamp_is_always_aware():
+    """A naive datetime would be read as server local time by stix2."""
+    for value in ["1754640000", "2025-08-08T08:00:00", "2025-08-08"]:
+        assert utils.parse_timestamp(value).tzinfo is not None
+
+
+@pytest.mark.parametrize("value", ["yesterday", "2025-13-01", "08/08/2025", "nan"])
+def test_parse_timestamp_rejects_an_unreadable_date(value):
+    with pytest.raises(Exception, match="Invalid date"):
+        utils.parse_timestamp(value)

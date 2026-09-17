@@ -34,6 +34,11 @@ def create_sighting(helper, event):
         "sighting_of_type": helper.get_param("sighting_of_type"),
         "where_sighted_value": helper.get_param("where_sighted_value"),
         "where_sighted_type": helper.get_param("where_sighted_type"),
+        # number of matches and the window they span when the alert
+        # aggregates them, each empty for a plain single event sighting
+        "count": helper.get_param("count"),
+        "first_seen": helper.get_param("first_seen"),
+        "last_seen": helper.get_param("last_seen"),
         "labels": labels,
         "tlp": helper.get_param("tlp"),
     }

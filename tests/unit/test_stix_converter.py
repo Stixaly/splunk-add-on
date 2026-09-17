@@ -238,3 +238,96 @@ def test_every_bundle_contains_exactly_one_sighting(sighting_params, alert_event
         bundle = build(sighting_params, alert_event,
                        sighting_of_type=sighting_of_type, sighting_of_value=value)
         assert len(objects_of(bundle, "sighting")) == 1
+
+
+# --------------------------------------------------------------------------
+# count and time window of a sighting
+# --------------------------------------------------------------------------
+
+def sighting_of(bundle):
+    return objects_of(bundle, "sighting")[0]
+
+
+def test_sighting_count_defaults_to_one(sighting_params, alert_event):
+    assert sighting_of(build(sighting_params, alert_event))["count"] == 1
+
+
+@pytest.mark.parametrize("count, expected", [("12", 12), (" 7 ", 7), (3, 3), ("", 1), (None, 1)])
+def test_sighting_carries_the_count(sighting_params, alert_event, count, expected):
+    bundle = build(sighting_params, alert_event, count=count)
+    assert sighting_of(bundle)["count"] == expected
+
+
+@pytest.mark.parametrize("count", ["twelve", "12.5", "-3"])
+def test_an_invalid_count_is_an_error(sighting_params, alert_event, count):
+    with pytest.raises(Exception, match="Invalid count"):
+        build(sighting_params, alert_event, count=count)
+
+
+def test_sighting_window_defaults_to_the_event_time(sighting_params, alert_event):
+    """Without an explicit window the sighting is the instant of the event,
+    which is the behaviour of the earlier versions."""
+    sighting = sighting_of(build(sighting_params, alert_event))
+    assert sighting["first_seen"] == "2025-08-08T08:00:00Z"
+    assert sighting["last_seen"] == "2025-08-08T08:00:00Z"
+
+
+def test_sighting_window_defaults_to_now_without_an_event_time(sighting_params):
+    from datetime import datetime, timezone
+
+    sighting = sighting_of(build(sighting_params, {"host": "splunk-search-01"}))
+    first_seen = datetime.strptime(sighting["first_seen"], "%Y-%m-%dT%H:%M:%S.%fZ") \
+        if "." in sighting["first_seen"] else datetime.strptime(sighting["first_seen"], "%Y-%m-%dT%H:%M:%SZ")
+    first_seen = first_seen.replace(tzinfo=timezone.utc)
+    assert abs((datetime.now(timezone.utc) - first_seen).total_seconds()) < 60
+    assert sighting["last_seen"] == sighting["first_seen"]
+
+
+def test_sighting_carries_the_window(sighting_params, alert_event):
+    """min(_time) and max(_time) of a stats search give epoch seconds."""
+    sighting = sighting_of(build(sighting_params, alert_event,
+                                 first_seen="1754600000", last_seen="1754640000"))
+    assert sighting["first_seen"] == "2025-08-07T20:53:20Z"
+    assert sighting["last_seen"] == "2025-08-08T08:00:00Z"
+
+
+def test_sighting_window_accepts_iso_dates(sighting_params, alert_event):
+    sighting = sighting_of(build(sighting_params, alert_event,
+                                 first_seen="2025-08-07T20:53:20Z",
+                                 last_seen="2025-08-08T10:00:00+02:00"))
+    assert sighting["first_seen"] == "2025-08-07T20:53:20Z"
+    assert sighting["last_seen"] == "2025-08-08T08:00:00Z"
+
+
+@pytest.mark.parametrize("given", ["first_seen", "last_seen"])
+def test_a_window_with_one_end_is_read_as_that_instant(sighting_params, alert_event, given):
+    sighting = sighting_of(build(sighting_params, alert_event, **{given: "1754600000"}))
+    assert sighting["first_seen"] == "2025-08-07T20:53:20Z"
+    assert sighting["last_seen"] == "2025-08-07T20:53:20Z"
+
+
+def test_a_reversed_window_is_an_error(sighting_params, alert_event):
+    """stix2 would reject it too, but with a message naming no parameter."""
+    with pytest.raises(Exception, match="Invalid sighting dates"):
+        build(sighting_params, alert_event, first_seen="1754640000", last_seen="1754600000")
+
+
+@pytest.mark.parametrize("given", ["first_seen", "last_seen"])
+def test_an_unreadable_date_is_an_error(sighting_params, alert_event, given):
+    with pytest.raises(Exception, match="Invalid date"):
+        build(sighting_params, alert_event, **{given: "yesterday"})
+
+
+def test_the_window_and_the_count_do_not_change_the_sighting_id(sighting_params, alert_event):
+    """Every run of the alert for the same indicator on the same system has to
+    land on the same sighting in OpenCTI, whatever the window reported."""
+    plain = sighting_of(build(sighting_params, alert_event))
+    aggregated = sighting_of(build(sighting_params, alert_event, count="40",
+                                   first_seen="1754600000", last_seen="1754640000"))
+    assert aggregated["id"] == plain["id"]
+
+
+def test_the_window_does_not_move_the_indicator_valid_from(sighting_params, alert_event):
+    """The indicator is only referenced, its own dates stay those of the event."""
+    bundle = build(sighting_params, alert_event, first_seen="1754600000", last_seen="1754640000")
+    assert objects_of(bundle, "indicator")[0]["valid_from"] == "2025-08-08T08:00:00Z"

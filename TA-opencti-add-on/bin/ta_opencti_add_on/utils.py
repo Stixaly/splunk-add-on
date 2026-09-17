@@ -73,6 +73,79 @@ def get_hash_type(value: str):
     else:
         return None
 
+_TZ_OFFSET_WITHOUT_COLON = re.compile(r"([+-]\d{2})(\d{2})$")
+
+
+def parse_count(value, default=1):
+    """Parse the count given to the sighting alert action.
+
+    The value comes from a Splunk token, so it is usually a string. An empty
+    value falls back to the default, anything else has to be a whole,
+    non-negative number.
+
+    :param value:
+    :param default:
+    :return:
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        raise Exception(f"Invalid count: {value!r}, a whole number is expected")
+    if isinstance(value, int):
+        count = value
+    else:
+        text = str(value).strip()
+        if text == "":
+            return default
+        try:
+            number = float(text)
+        except ValueError:
+            raise Exception(f"Invalid count: {value!r}, a whole number is expected")
+        if not number.is_integer():
+            raise Exception(f"Invalid count: {value!r}, a whole number is expected")
+        count = int(number)
+    if count < 0:
+        raise Exception(f"Invalid count: {value!r}, it cannot be negative")
+    return count
+
+
+def parse_timestamp(value):
+    """Parse a date given to an alert action.
+
+    The value is accepted as an epoch in seconds, which is the form of the
+    Splunk _time field and of min(_time) / max(_time), or as an ISO 8601 date
+    with an optional fraction and offset. A date without offset is read as UTC.
+
+    :param value:
+    :return: an aware datetime in UTC, or None when the value is empty
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime.datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=datetime.timezone.utc)
+        return value
+    text = str(value).strip()
+    if text == "":
+        return None
+    try:
+        return datetime.datetime.fromtimestamp(float(text), datetime.timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        pass
+    iso = text
+    if iso[-1] in "zZ":
+        iso = iso[:-1] + "+00:00"
+    # "+0200", as Splunk's strftime %z writes it, is not accepted before Python 3.11
+    iso = _TZ_OFFSET_WITHOUT_COLON.sub(r"\1:\2", iso)
+    try:
+        parsed = datetime.datetime.fromisoformat(iso)
+    except ValueError:
+        raise Exception(f"Invalid date: {value!r}, an epoch in seconds or an ISO 8601 date is expected")
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed
+
+
 def generate_identity_id(name: str, identity_class: str):
     """
     :param name:

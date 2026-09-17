@@ -170,6 +170,9 @@ You can create an incident or an incident response case in OpenCTI from a custom
 | `Sighting Of (type)`     | Type of what was sighted (see below)                          | Sighting   |                              
 | `Where Sighted (value)`  | Value of the 'System' or 'Organization' that saw the sighting | Sighting   |                              
 | `Where Sighted (type)`   | 'System' or 'Organization' that saw the sighting              | Sighting   | 
+| `Count`                  | Number of times the indicator was seen (default: 1)           | Sighting   | 
+| `First Seen`             | Start of the sighting, epoch seconds or ISO 8601 (default: the event time) | Sighting   | 
+| `Last Seen`              | End of the sighting, epoch seconds or ISO 8601 (default: the event time)   | Sighting   | 
 | `Labels`                 | Labels (separated by a comma) to be applied                   | Sighting   | 
 | `TLP`                    | Markings to be applied                                        | Sighting   | 
 
@@ -184,6 +187,52 @@ The `Sighting Of (type)` setting decides whether the sighting is attached to an 
 Use one of the *Indicator* types to have the sighting counted on the IOC itself, which is what feeds the indicator decay and scoring in OpenCTI. The indicator id is derived the same way OpenCTI derives it, so the sighting attaches to the indicator that already exists on the platform instead of creating a duplicate.
 
 When the alert is driven by the `opencti_lookup` KV store, the cleanest option is `Indicator (OpenCTI id or STIX pattern)` with `Sighting Of (value)` set to the `id` field returned by the lookup, for example `$result.id$`.
+
+#### Count the matches instead of sending one sighting per match
+
+By default the alert action sends one sighting per result of the alert, with a `count` of 1 and
+`first_seen` / `last_seen` set to the time of the event. To report the number of matches instead,
+aggregate the results in the search and hand the aggregates to the `Count`, `First Seen` and
+`Last Seen` parameters. `Count` expects a whole number, the two dates accept an epoch in seconds,
+which is the form of `_time`, `min(_time)` and `max(_time)`, or an ISO 8601 date. When only one of
+the two dates is given the sighting is that instant.
+
+Example of a search counting, per index, the matches of every indicator over the last day:
+
+```
+index=* earliest=-24h
+| lookup opencti_lookup value as url_domain OUTPUT id as match_ioc_id
+| search match_ioc_id=*
+| stats count min(_time) as first_seen max(_time) as last_seen by match_ioc_id, index
+```
+
+with the "OpenCTI - Create Sighting" action configured as follows:
+
+| Parameter               | Value                                    |
+|-------------------------|------------------------------------------|
+| `Sighting Of (type)`    | `Indicator (OpenCTI id or STIX pattern)` |
+| `Sighting Of (value)`   | `$result.match_ioc_id$`                  |
+| `Where Sighted (type)`  | `System`                                 |
+| `Where Sighted (value)` | `Splunk - $result.index$`                |
+| `Count`                 | `$result.count$`                         |
+| `First Seen`            | `$result.first_seen$`                    |
+| `Last Seen`             | `$result.last_seen$`                     |
+
+> **Important:** set the alert to trigger **for each result**. Splunk resolves the `$result.*$` tokens
+> once per trigger, from the first result, so an alert triggered *once* for several results would
+> report the first indicator and the first index for all of them.
+
+The id of the sighting is derived from the indicator and from the system, so every run of the alert
+lands on the same sighting in OpenCTI. On that update OpenCTI extends `first_seen` and `last_seen` to
+the reported window and adds the reported count to the existing one whenever the window grows. A run
+reporting a window already covered leaves the count unchanged, so re-running an alert does not count
+the same matches twice. The count of a window that only partly overlaps the previous one is added in
+full, so schedule the alert on windows that do not overlap, for instance every hour over
+`earliest=-1h@h latest=@h`.
+
+The system named in `Where Sighted (value)` is created in OpenCTI when it does not exist yet and
+reused otherwise, which makes `Splunk - $result.index$` a convenient way to get one system per
+Splunk index.
 
 You can use [Splunk "tokens"](https://docs.splunk.com/Documentation/Splunk/9.2.2/Alert/EmailNotificationTokens#Result_tokens) as variables in the form to contextualize the data imported into OpenCTI.
 Tokens represent data that a search generates. They work as placeholders or variables for data values that populate when the search completes.

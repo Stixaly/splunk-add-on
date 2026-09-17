@@ -15,6 +15,7 @@ COLLECTIONS = DEFAULT / "collections.conf"
 TRANSFORMS = DEFAULT / "transforms.conf"
 ALERT_ACTIONS = DEFAULT / "alert_actions.conf"
 SIGHTING_FORM = DEFAULT / "data" / "ui" / "alerts" / "opencti_create_sighting.html"
+ALERT_ACTIONS_SPEC = ADDON / "README" / "alert_actions.conf.spec"
 
 SINGLE_COLLECTION = "opencti_indicators"
 COMPOSITE_COLLECTION = "opencti_indicators_composite"
@@ -195,3 +196,33 @@ def test_every_form_option_is_accepted_by_the_converter(sighting_params, alert_e
             sighting_params(sighting_of_type=option, sighting_of_value=value), alert_event))
         sightings = [o for o in bundle["objects"] if o["type"] == "sighting"]
         assert len(sightings) == 1, "%s produced no sighting" % option
+
+
+def sighting_params_of(path):
+    options = read_conf(path).options("opencti_create_sighting")
+    return {option[len("param."):] for option in options if option.startswith("param.")}
+
+
+def sighting_form_params():
+    html = SIGHTING_FORM.read_bytes().decode("utf-8")
+    return set(re.findall(r'name="action\.opencti_create_sighting\.param\.([a-z_]+)"', html))
+
+
+def test_every_sighting_parameter_is_declared_everywhere():
+    """A parameter in the form but not in alert_actions.conf is not saved by
+    Splunk, one in the conf but not in the spec fails the app inspection, and
+    one declared but absent from the form cannot be filled in."""
+    assert sighting_form_params() == sighting_params_of(ALERT_ACTIONS)
+    assert sighting_params_of(ALERT_ACTIONS) == sighting_params_of(ALERT_ACTIONS_SPEC)
+
+
+@pytest.mark.parametrize("param", ["count", "first_seen", "last_seen"])
+def test_the_aggregation_parameters_are_offered(param):
+    assert param in sighting_form_params()
+
+
+@pytest.mark.parametrize("param", ["count", "first_seen", "last_seen"])
+def test_the_aggregation_parameters_have_no_default(param):
+    """An empty value is what makes the converter fall back to a single event
+    with a count of one, so an existing alert keeps its behaviour."""
+    assert read_conf(ALERT_ACTIONS).get("opencti_create_sighting", "param." + param).strip() == ""

@@ -5,7 +5,7 @@ from datetime import timedelta
 from app_connector_helper import SplunkAppConnectorHelper
 from stix_converter import convert_to_sighting, sighting_target_of
 from constants import CONNECTOR_NAME, CONNECTOR_ID
-from utils import parse_score, parse_days
+from utils import parse_score, parse_days, event_field_values, unique
 
 
 def refresh_sighted_indicator(helper, splunk_app_connector, bundle, params):
@@ -53,6 +53,12 @@ def create_sighting(helper, event):
     # remove potential empty labels
     labels = list(filter(None, labels))
 
+    # the labels carried by a field of the result, by default the labels of
+    # the indicator as opencti_lookup returns them, join the labels of the form
+    labels_field = (helper.get_param("labels_field") or "").strip()
+    if labels_field:
+        labels = unique(labels + event_field_values(event, labels_field))
+
     helper.log_info(helper.get_param("sighting_of_value"))
     helper.log_info(type(helper.get_param("sighting_of_value")))
     helper.log_info(helper.get_param("sighting_of_type"))
@@ -78,6 +84,7 @@ def create_sighting(helper, event):
         # leave the indicator as it is
         "indicator_score": helper.get_param("indicator_score"),
         "indicator_validity_days": helper.get_param("indicator_validity_days"),
+        "labels_field": labels_field,
         "labels": labels,
         "tlp": helper.get_param("tlp"),
     }

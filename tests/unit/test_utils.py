@@ -208,3 +208,44 @@ def test_parse_days(value, expected):
 def test_parse_days_rejects_what_is_not_a_number_of_days(value):
     with pytest.raises(Exception, match="Invalid number of days"):
         utils.parse_days(value)
+
+
+# --------------------------------------------------------------------------
+# fields of an alert result
+# --------------------------------------------------------------------------
+
+def test_event_field_values_reads_the_mv_column_first():
+    """Splunk hands a multi-valued field as __mv_<field> = $a$;$b$."""
+    event = {"labels": "c2\ncobalt-strike", "__mv_labels": "$c2$;$cobalt-strike$;$apt29$"}
+    assert utils.event_field_values(event, "labels") == ["c2", "cobalt-strike", "apt29"]
+
+
+def test_event_field_values_unescapes_a_literal_dollar():
+    event = {"__mv_price": "$100$$$;$free$"}
+    assert utils.event_field_values(event, "price") == ["100$", "free"]
+
+
+def test_event_field_values_falls_back_to_the_newline_joined_column():
+    assert utils.event_field_values({"labels": "c2\ncobalt-strike"}, "labels") == ["c2", "cobalt-strike"]
+
+
+def test_event_field_values_of_a_single_value():
+    assert utils.event_field_values({"labels": "c2"}, "labels") == ["c2"]
+
+
+@pytest.mark.parametrize("event", [{}, {"labels": ""}, {"labels": "  "}, {"__mv_labels": "", "labels": ""}])
+def test_event_field_values_of_a_missing_or_empty_field(event):
+    assert utils.event_field_values(event, "labels") == []
+
+
+def test_event_field_values_without_a_field_name():
+    assert utils.event_field_values({"labels": "c2"}, "") == []
+    assert utils.event_field_values({"labels": "c2"}, None) == []
+
+
+def test_event_field_values_strips_and_drops_blanks():
+    assert utils.event_field_values({"__mv_labels": "$ c2 $;$$;$apt29$"}, "labels") == ["c2", "apt29"]
+
+
+def test_unique_keeps_the_first_order():
+    assert utils.unique(["b", "a", "b", "c", "a"]) == ["b", "a", "c"]

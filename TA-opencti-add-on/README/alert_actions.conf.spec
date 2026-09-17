@@ -34,4 +34,5 @@ param.last_seen = <string> Last Seen. End of the sighting, as an epoch in second
 param.indicator_score = <string> Sighted indicator score. Score given to the sighted indicator, from 0 to 100. Empty leaves the score unchanged.
 param.indicator_validity_days = <string> Sighted indicator validity (days). The indicator stays valid that many days after the sighting, when later than its current validity. Empty leaves the validity unchanged.
 param.labels = <string> Labels.
+param.labels_field = <string> Labels from field. Name of a result field whose values are added to the labels, such as the labels field returned by opencti_lookup. It's default value is labels. Empty adds none.
 param.tlp = <list> TLP.  It's default value is tlp_amber.

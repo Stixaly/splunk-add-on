@@ -233,3 +233,11 @@ def test_the_optional_sighting_parameters_have_no_default(param):
     with a count of one and leave the indicator alone, so an existing alert
     keeps its behaviour."""
     assert read_conf(ALERT_ACTIONS).get("opencti_create_sighting", "param." + param).strip() == ""
+
+
+def test_the_labels_field_defaults_to_the_lookup_field():
+    """The labels of a matched indicator reach the sighting without any token
+    because the default names the field opencti_lookup returns."""
+    default = read_conf(ALERT_ACTIONS).get("opencti_create_sighting", "param.labels_field")
+    assert default.strip() == "labels"
+    assert "labels" in fields_list("opencti_lookup")

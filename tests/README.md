@@ -37,6 +37,7 @@ third party code that is shipped, not maintained here.
 | `unit/test_stix_pattern.py` | the structural pattern parser, DNF expansion, routing |
 | `unit/test_stix_converter.py` | sighting bundles (target, count, time window), observable conversion |
 | `unit/test_incident_converters.py` | incident and case bundles, CIM and field-mapping extraction |
+| `unit/test_indicator_refresh.py` | the score and validity given to a sighted indicator through the OpenCTI API, and the alert helper around it |
 | `regression/test_ioc_coverage.py` | the exact set of indicators that is ingested |
 | `regression/test_conf_integrity.py` | the `.conf` and form files against the code |
 | `regression/test_fixed_bugs.py` | one test per defect that has been fixed |

@@ -216,13 +216,20 @@ def test_every_sighting_parameter_is_declared_everywhere():
     assert sighting_params_of(ALERT_ACTIONS) == sighting_params_of(ALERT_ACTIONS_SPEC)
 
 
-@pytest.mark.parametrize("param", ["count", "first_seen", "last_seen"])
-def test_the_aggregation_parameters_are_offered(param):
+# parameters that are empty unless the alert asks for more than a plain sighting
+OPTIONAL_SIGHTING_PARAMS = [
+    "count", "first_seen", "last_seen", "indicator_score", "indicator_validity_days",
+]
+
+
+@pytest.mark.parametrize("param", OPTIONAL_SIGHTING_PARAMS)
+def test_the_optional_sighting_parameters_are_offered(param):
     assert param in sighting_form_params()
 
 
-@pytest.mark.parametrize("param", ["count", "first_seen", "last_seen"])
-def test_the_aggregation_parameters_have_no_default(param):
+@pytest.mark.parametrize("param", OPTIONAL_SIGHTING_PARAMS)
+def test_the_optional_sighting_parameters_have_no_default(param):
     """An empty value is what makes the converter fall back to a single event
-    with a count of one, so an existing alert keeps its behaviour."""
+    with a count of one and leave the indicator alone, so an existing alert
+    keeps its behaviour."""
     assert read_conf(ALERT_ACTIONS).get("opencti_create_sighting", "param." + param).strip() == ""

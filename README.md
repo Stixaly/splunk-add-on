@@ -173,6 +173,8 @@ You can create an incident or an incident response case in OpenCTI from a custom
 | `Count`                  | Number of times the indicator was seen (default: 1)           | Sighting   | 
 | `First Seen`             | Start of the sighting, epoch seconds or ISO 8601 (default: the event time) | Sighting   | 
 | `Last Seen`              | End of the sighting, epoch seconds or ISO 8601 (default: the event time)   | Sighting   | 
+| `Sighted indicator score` | Score given to the sighted indicator, 0 to 100 (default: unchanged)       | Sighting   | 
+| `Sighted indicator validity (days)` | Days the sighted indicator stays valid after the sighting (default: unchanged) | Sighting   | 
 | `Labels`                 | Labels (separated by a comma) to be applied                   | Sighting   | 
 | `TLP`                    | Markings to be applied                                        | Sighting   | 
 
@@ -233,6 +235,35 @@ full, so schedule the alert on windows that do not overlap, for instance every h
 The system named in `Where Sighted (value)` is created in OpenCTI when it does not exist yet and
 reused otherwise, which makes `Splunk - $result.index$` a convenient way to get one system per
 Splunk index.
+
+#### Refresh the sighted indicator: score and validity
+
+A match is evidence that the indicator is still live. Two parameters let the alert action say so on
+the indicator itself, once the sighting is sent:
+
+| Parameter                           | Effect on the sighted indicator                                                                              |
+|-------------------------------------|--------------------------------------------------------------------------------------------------------------|
+| `Sighted indicator score`           | its score is set to this value, from 0 to 100, for instance `100`                                            |
+| `Sighted indicator validity (days)` | it stays valid that many days after the sighting: `valid_until` becomes `last_seen` + N days, for instance `90` for three months |
+
+Both are empty by default, which leaves the indicator untouched. They apply to the *Indicator*
+sighting types only, a sighting on an observable has no indicator to refresh. The validity is only
+ever extended: an indicator already valid later than `last_seen` + N days keeps its date. An expired
+indicator that is sighted again is given a validity in the future, which OpenCTI takes as a reason
+to un-revoke it.
+
+The values are applied through the OpenCTI API to the existing indicator, and carried by the
+indicator of the bundle when the sighting creates it. What OpenCTI then does with them depends on
+its decay rules (behaviour read from the OpenCTI 7 sources):
+
+- On an indicator **without decay**, or excluded from it, the score and the validity are set as given.
+- On an indicator **under a decay rule**, a new score restarts the decay from that score, then the
+  validity is extended to `last_seen` + N days. OpenCTI ignores a score that the same connector user
+  already gave to that indicator earlier, or that equals the score the decay started from, so a
+  second identical refresh by the add-on extends the validity without restarting the decay. The
+  decay rule still revokes the indicator once its score reaches the revoke score of the rule,
+  whatever `valid_until` says. To have the validity honoured on its own, exclude the indicators
+  concerned from decay in OpenCTI.
 
 You can use [Splunk "tokens"](https://docs.splunk.com/Documentation/Splunk/9.2.2/Alert/EmailNotificationTokens#Result_tokens) as variables in the form to contextualize the data imported into OpenCTI.
 Tokens represent data that a search generates. They work as placeholders or variables for data values that populate when the search completes.

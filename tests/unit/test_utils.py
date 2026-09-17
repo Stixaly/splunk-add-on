@@ -182,3 +182,29 @@ def test_parse_timestamp_is_always_aware():
 def test_parse_timestamp_rejects_an_unreadable_date(value):
     with pytest.raises(Exception, match="Invalid date"):
         utils.parse_timestamp(value)
+
+
+@pytest.mark.parametrize("value, expected", [
+    (None, None), ("", None), ("  ", None), ("100", 100), (" 0 ", 0), (75, 75), ("100.0", 100),
+])
+def test_parse_score(value, expected):
+    assert utils.parse_score(value) == expected
+
+
+@pytest.mark.parametrize("value", ["101", "-1", "abc", "50.5"])
+def test_parse_score_rejects_what_is_not_a_score(value):
+    with pytest.raises(Exception, match="Invalid score"):
+        utils.parse_score(value)
+
+
+@pytest.mark.parametrize("value, expected", [
+    (None, None), ("", None), ("90", 90), (" 1 ", 1), (365, 365),
+])
+def test_parse_days(value, expected):
+    assert utils.parse_days(value) == expected
+
+
+@pytest.mark.parametrize("value", ["0", "-3", "abc", "1.5"])
+def test_parse_days_rejects_what_is_not_a_number_of_days(value):
+    with pytest.raises(Exception, match="Invalid number of days"):
+        utils.parse_days(value)

@@ -31,5 +31,7 @@ param.where_sighted_type = <string> Where Sighted (type). It's default value is 
 param.count = <string> Count. Number of times the sighting was observed. It's default value is 1.
 param.first_seen = <string> First Seen. Start of the sighting, as an epoch in seconds or an ISO 8601 date. It's default value is the event time.
 param.last_seen = <string> Last Seen. End of the sighting, as an epoch in seconds or an ISO 8601 date. It's default value is the event time.
+param.indicator_score = <string> Sighted indicator score. Score given to the sighted indicator, from 0 to 100. Empty leaves the score unchanged.
+param.indicator_validity_days = <string> Sighted indicator validity (days). The indicator stays valid that many days after the sighting, when later than its current validity. Empty leaves the validity unchanged.
 param.labels = <string> Labels.
 param.tlp = <list> TLP.  It's default value is tlp_amber.

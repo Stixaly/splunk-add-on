@@ -8,7 +8,7 @@ import sys
 
 from alert_actions_base import ModularAlertBase
 import modalert_opencti_create_sighting_helper
-from utils import parse_count, parse_timestamp
+from utils import parse_count, parse_timestamp, parse_score, parse_days
 
 class AlertActionWorkercreate_sighting(ModularAlertBase):
 
@@ -37,6 +37,16 @@ class AlertActionWorkercreate_sighting(ModularAlertBase):
             except Exception as ex:
                 self.log_error(f'{param_name} is invalid: {str(ex)}')
                 return False
+        try:
+            parse_score(self.get_param("indicator_score"))
+        except Exception as ex:
+            self.log_error(f'indicator_score is invalid: {str(ex)}')
+            return False
+        try:
+            parse_days(self.get_param("indicator_validity_days"))
+        except Exception as ex:
+            self.log_error(f'indicator_validity_days is invalid: {str(ex)}')
+            return False
 
         return True
 

@@ -1,8 +1,43 @@
 # encoding = utf-8
 import json
+from datetime import timedelta
+
 from app_connector_helper import SplunkAppConnectorHelper
-from stix_converter import convert_to_sighting
+from stix_converter import convert_to_sighting, sighting_target_of
 from constants import CONNECTOR_NAME, CONNECTOR_ID
+from utils import parse_score, parse_days
+
+
+def refresh_sighted_indicator(helper, splunk_app_connector, bundle, params):
+    """Apply the score and the validity asked by the alert to the sighted indicator.
+
+    :param helper:
+    :param splunk_app_connector:
+    :param bundle: the sighting bundle that was sent
+    :param params: the alert parameters
+    :return:
+    """
+    score = parse_score(params.get("indicator_score"))
+    validity_days = parse_days(params.get("indicator_validity_days"))
+    if score is None and validity_days is None:
+        return
+
+    target = sighting_target_of(bundle)
+    if target is None:
+        helper.log_info("The sighting is attached to an observable, "
+                        "there is no indicator to give a score or a validity to")
+        return
+    indicator_id, last_seen = target
+
+    valid_until = None
+    if validity_days is not None:
+        valid_until = last_seen + timedelta(days=validity_days)
+
+    try:
+        splunk_app_connector.refresh_indicator(indicator_id, score=score, valid_until=valid_until)
+    except Exception as ex:
+        helper.log_error(f"Unable to update the sighted indicator {indicator_id}, "
+                         f"exception: {str(ex)}")
 
 
 def create_sighting(helper, event):
@@ -39,6 +74,10 @@ def create_sighting(helper, event):
         "count": helper.get_param("count"),
         "first_seen": helper.get_param("first_seen"),
         "last_seen": helper.get_param("last_seen"),
+        # score and validity given to the sighted indicator, each empty to
+        # leave the indicator as it is
+        "indicator_score": helper.get_param("indicator_score"),
+        "indicator_validity_days": helper.get_param("indicator_validity_days"),
         "labels": labels,
         "tlp": helper.get_param("tlp"),
     }
@@ -80,6 +119,8 @@ def create_sighting(helper, event):
                          f"an exception occurred while sending STIX bundle,"
                          f"exception: {str(ex)}")
         return
+
+    refresh_sighted_indicator(helper, splunk_app_connector, bundle, params)
 
 
 def process_event(helper, *args, **kwargs):

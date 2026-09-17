@@ -73,17 +73,7 @@ class SplunkAppConnectorHelper:
             }
         """
 
-        r = requests.post(
-            url=self.api_url,
-            json={"query": query, "variables": input},
-            headers=self.headers,
-            verify=VERIFY_SSL,
-            proxies=self.proxies
-        )
-
-        if r.status_code != 200:
-            raise Exception(f"An exception occurred while registering Splunk App, "
-                            f"received status code: {r.status_code}, exception: {r.content}")
+        return self._graphql(query, input).get("registerConnector")
 
     def send_stix_bundle(self, bundle):
         """
@@ -101,16 +91,9 @@ class SplunkAppConnectorHelper:
             "bundle": bundle
         }
 
-        r = requests.post(
-            url=self.api_url,
-            json={"query": query, "variables": variables},
-            headers=self.headers,
-            verify=VERIFY_SSL,
-            proxies=self.proxies
-        )
-        if r.status_code != 200:
-            raise Exception(f"An exception occurred while sending STIX bundle, "
-                            f"received status code: {r.status_code}, exception: {r.content}")
+        # the mutation answers true once the bundle is queued for ingestion
+        if not self._graphql(query, variables).get("stixBundlePush"):
+            raise Exception("OpenCTI did not accept the STIX bundle")
 
     def _graphql(self, query, variables):
         """Run a GraphQL operation and return its data.
@@ -132,7 +115,13 @@ class SplunkAppConnectorHelper:
         if r.status_code != 200:
             raise Exception(f"An exception occurred while querying OpenCTI, "
                             f"received status code: {r.status_code}, exception: {r.content}")
-        payload = r.json()
+        try:
+            payload = r.json()
+        except ValueError:
+            raise Exception(f"OpenCTI answered with something that is not JSON, "
+                            f"is the URL that of the platform? Answer: {r.content[:200]}")
+        if not isinstance(payload, dict):
+            raise Exception(f"OpenCTI answered with something that is not a GraphQL response: {payload!r}"[:400])
         errors = payload.get("errors")
         if errors:
             messages = "; ".join(str(error.get("message", error)) for error in errors)

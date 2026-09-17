@@ -263,3 +263,40 @@ def test_the_sighting_alert_validates_its_parameters():
     source = Path(BIN / "opencti_create_sighting.py").read_text(encoding="utf-8")
     body = source.split("def validate_params")[1].split("def ")[0]
     assert "sighting_of_value" in body and "return False" in body
+
+
+# --------------------------------------------------------------------------
+# OpenCTI API
+# --------------------------------------------------------------------------
+
+def test_a_graphql_error_no_longer_passes_as_a_successful_push(monkeypatch):
+    """OpenCTI answers a functional error, an unknown connector or a rejected
+    bundle for instance, with a 200 status and an "errors" list. Only the
+    status was checked, so the alert logged a successful send and nothing
+    ever reached the platform."""
+    import json
+
+    import app_connector_helper
+    from app_connector_helper import SplunkAppConnectorHelper
+
+    class Response:
+        status_code = 200
+        content = b'{"errors": [{"message": "Connector not found"}], "data": null}'
+
+        def json(self):
+            return json.loads(self.content)
+
+    monkeypatch.setattr(app_connector_helper.requests, "post", lambda **kwargs: Response())
+
+    class Helper:
+        def _get_proxy_uri(self):
+            return None
+
+        def log_debug(self, message):
+            pass
+
+    connector = SplunkAppConnectorHelper(
+        connector_id="x", connector_name="Splunk App", opencti_url="https://opencti.test",
+        opencti_api_key="token", splunk_helper=Helper())
+    with pytest.raises(Exception, match="Connector not found"):
+        connector.send_stix_bundle("{}")

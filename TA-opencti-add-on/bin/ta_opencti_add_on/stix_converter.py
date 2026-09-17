@@ -1,11 +1,13 @@
+import json
 import stix2
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from stix_constants import CustomObservableUserAgent, CustomObservableText, CustomObjectCaseIncident
 from stix_constants import CustomObservableHostname
 from utils import get_hash_type, is_ipv6, is_ipv4
 from utils import generate_incident_id, generate_identity_id, generate_relation_id, generate_case_incident_id, generate_sighting_id
 from utils import generate_indicator_id
+from utils import parse_count, parse_timestamp, parse_score, parse_days
 
 FAKE_INDICATOR_ID = "indicator--51b92778-cef0-4a90-b7ec-ebd620d01ac8"
 
@@ -466,6 +468,32 @@ def convert_to_sighting(alert_params, event):
     else:
         event_date = datetime.now(timezone.utc)
 
+    # when the alert aggregates the matches of an indicator, the number of
+    # them and the window they span are given by the alert parameters. Each
+    # falls back to the single event otherwise, and a window with only one of
+    # its ends is read as that instant
+    count = parse_count(alert_params.get("count"))
+    first_seen = parse_timestamp(alert_params.get("first_seen"))
+    last_seen = parse_timestamp(alert_params.get("last_seen"))
+    if first_seen is None and last_seen is None:
+        first_seen = last_seen = event_date
+    elif first_seen is None:
+        first_seen = last_seen
+    elif last_seen is None:
+        last_seen = first_seen
+    if last_seen < first_seen:
+        raise Exception(f"Invalid sighting dates: first_seen {first_seen.isoformat()} "
+                        f"is later than last_seen {last_seen.isoformat()}")
+
+    # the sighted indicator can be given a new score and a validity counted
+    # from the sighting. They are set on the indicator when the bundle carries
+    # it, the alert action applies them to an existing one through the API
+    indicator_score = parse_score(alert_params.get("indicator_score"))
+    indicator_validity_days = parse_days(alert_params.get("indicator_validity_days"))
+    indicator_valid_until = None
+    if indicator_validity_days is not None:
+        indicator_valid_until = last_seen + timedelta(days=indicator_validity_days)
+
     # manage marking
     marking = alert_params.get("tlp")
     marking_id = _get_stix_marking_id(marking)
@@ -522,15 +550,23 @@ def convert_to_sighting(alert_params, event):
             # the id is computed the OpenCTI way so that the sighting is attached
             # to the existing indicator instead of creating a duplicate one
             sighting_of_ref = generate_indicator_id(pattern)
+            indicator_custom_properties = {}
+            if indicator_score is not None:
+                indicator_custom_properties["x_opencti_score"] = indicator_score
+            if indicator_valid_until is not None and indicator_valid_until <= event_date:
+                raise Exception(f"Invalid indicator validity: valid_until {indicator_valid_until.isoformat()} "
+                                f"is not after valid_from {event_date.isoformat()}")
             stix_indicator = stix2.Indicator(
                 id=sighting_of_ref,
                 name=str(sighting_of_value),
                 pattern=pattern,
                 pattern_type="stix",
                 valid_from=event_date,
+                valid_until=indicator_valid_until,
                 created_by_ref=stix_author.id,
                 object_marking_refs=[marking_id],
                 labels=alert_params.get("labels"),
+                custom_properties=indicator_custom_properties,
                 allow_custom=True,
             )
             bundle_objects.append(stix_indicator)
@@ -588,10 +624,10 @@ def convert_to_sighting(alert_params, event):
         created_by_ref=stix_author.id,
         description=None,
         sighting_of_ref=sighting_of_ref,
-        first_seen=event_date,
-        last_seen=event_date,
+        first_seen=first_seen,
+        last_seen=last_seen,
         where_sighted_refs=[where_sighted],
-        count=1,
+        count=count,
         object_marking_refs=[marking_id],
         labels=alert_params.get("labels"),
         custom_properties=custom_properties,
@@ -601,3 +637,21 @@ def convert_to_sighting(alert_params, event):
 
     bundle = stix2.Bundle(objects=bundle_objects, allow_custom=True)
     return bundle.serialize()
+
+
+def sighting_target_of(bundle):
+    """Find the indicator a serialized sighting bundle is attached to.
+
+    :param bundle: the bundle returned by convert_to_sighting
+    :return: (indicator id, last_seen) or None when the sighting is on an
+             observable, which has no indicator to refresh
+    """
+    objects = json.loads(bundle).get("objects", [])
+    sightings = [o for o in objects if o.get("type") == "sighting"]
+    if not sightings:
+        return None
+    sighting = sightings[0]
+    indicator_id = sighting.get("sighting_of_ref")
+    if not indicator_id or indicator_id == FAKE_INDICATOR_ID:
+        return None
+    return indicator_id, parse_timestamp(sighting.get("last_seen"))

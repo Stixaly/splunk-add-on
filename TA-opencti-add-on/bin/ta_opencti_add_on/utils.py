@@ -73,6 +73,116 @@ def get_hash_type(value: str):
     else:
         return None
 
+_TZ_OFFSET_WITHOUT_COLON = re.compile(r"([+-]\d{2})(\d{2})$")
+
+
+def _parse_whole_number(value, label):
+    """Read a whole number given to an alert action.
+
+    The value comes from a Splunk token, so it is usually a string and may be
+    empty, which gives None.
+
+    :param value:
+    :param label: name of the parameter, for the error message
+    :return: an int, or None for an empty value
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise Exception(f"Invalid {label}: {value!r}, a whole number is expected")
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if text == "":
+        return None
+    try:
+        number = float(text)
+    except ValueError:
+        raise Exception(f"Invalid {label}: {value!r}, a whole number is expected")
+    if not number.is_integer():
+        raise Exception(f"Invalid {label}: {value!r}, a whole number is expected")
+    return int(number)
+
+
+def parse_count(value, default=1):
+    """Parse the count given to the sighting alert action.
+
+    An empty value falls back to the default, anything else has to be a whole,
+    non-negative number.
+
+    :param value:
+    :param default:
+    :return:
+    """
+    count = _parse_whole_number(value, "count")
+    if count is None:
+        return default
+    if count < 0:
+        raise Exception(f"Invalid count: {value!r}, it cannot be negative")
+    return count
+
+
+def parse_score(value):
+    """Parse the score to give a sighted indicator.
+
+    :param value:
+    :return: an int between 0 and 100, or None for an empty value
+    """
+    score = _parse_whole_number(value, "score")
+    if score is not None and not 0 <= score <= 100:
+        raise Exception(f"Invalid score: {value!r}, a whole number between 0 and 100 is expected")
+    return score
+
+
+def parse_days(value):
+    """Parse a number of days of validity to give a sighted indicator.
+
+    :param value:
+    :return: an int of at least 1, or None for an empty value
+    """
+    days = _parse_whole_number(value, "number of days")
+    if days is not None and days < 1:
+        raise Exception(f"Invalid number of days: {value!r}, at least 1 is expected")
+    return days
+
+
+def parse_timestamp(value):
+    """Parse a date given to an alert action.
+
+    The value is accepted as an epoch in seconds, which is the form of the
+    Splunk _time field and of min(_time) / max(_time), or as an ISO 8601 date
+    with an optional fraction and offset. A date without offset is read as UTC.
+
+    :param value:
+    :return: an aware datetime in UTC, or None when the value is empty
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime.datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=datetime.timezone.utc)
+        return value
+    text = str(value).strip()
+    if text == "":
+        return None
+    try:
+        return datetime.datetime.fromtimestamp(float(text), datetime.timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        pass
+    iso = text
+    if iso[-1] in "zZ":
+        iso = iso[:-1] + "+00:00"
+    # "+0200", as Splunk's strftime %z writes it, is not accepted before Python 3.11
+    iso = _TZ_OFFSET_WITHOUT_COLON.sub(r"\1:\2", iso)
+    try:
+        parsed = datetime.datetime.fromisoformat(iso)
+    except ValueError:
+        raise Exception(f"Invalid date: {value!r}, an epoch in seconds or an ISO 8601 date is expected")
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed
+
+
 def generate_identity_id(name: str, identity_class: str):
     """
     :param name:

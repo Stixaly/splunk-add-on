@@ -33,10 +33,12 @@ third party code that is shipped, not maintained here.
 |------|----------------|
 | `unit/test_input_module.py` | value normalisation, STIX unescaping, pattern parsing, `enrich_payload` |
 | `unit/test_collect_events.py` | the stream loop, against a fake KV store and a fake stream |
-| `unit/test_utils.py` | address and hash detection, deterministic STIX identifiers |
+| `unit/test_utils.py` | address and hash detection, deterministic STIX identifiers, count and date parameters of the alert |
 | `unit/test_stix_pattern.py` | the structural pattern parser, DNF expansion, routing |
-| `unit/test_stix_converter.py` | sighting bundles, observable conversion |
+| `unit/test_stix_converter.py` | sighting bundles (target, count, time window), observable conversion |
 | `unit/test_incident_converters.py` | incident and case bundles, CIM and field-mapping extraction |
+| `unit/test_app_connector.py` | the requests made to the OpenCTI API and how their answers are read |
+| `unit/test_indicator_refresh.py` | the score and validity given to a sighted indicator through the OpenCTI API, and the alert helper around it |
 | `regression/test_ioc_coverage.py` | the exact set of indicators that is ingested |
 | `regression/test_conf_integrity.py` | the `.conf` and form files against the code |
 | `regression/test_fixed_bugs.py` | one test per defect that has been fixed |

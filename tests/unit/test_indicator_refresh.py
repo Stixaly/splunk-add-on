@@ -304,3 +304,69 @@ def test_create_sighting_does_not_refresh_when_the_bundle_fails(monkeypatch, ale
 
     assert [call[0] for call in connector.calls] == ["register"]
     assert len(helper.logs["error"]) == 1
+
+
+# --------------------------------------------------------------------------
+# labels taken from a field of the result
+# --------------------------------------------------------------------------
+
+def sighting_labels_of(connector):
+    bundle = json.loads([call for call in connector.calls if call[0] == "send"][0][1])
+    return [o for o in bundle["objects"] if o["type"] == "sighting"][0]["labels"]
+
+
+def alert_params(**overrides):
+    params = {"sighting_of_value": INDICATOR_ID, "sighting_of_type": "indicator",
+              "where_sighted_value": "Splunk", "where_sighted_type": "system",
+              "labels": "splunk", "labels_field": "labels", "tlp": "tlp_amber"}
+    params.update(overrides)
+    return params
+
+
+def run_create_sighting(monkeypatch, params, event):
+    connector = RecordingConnector()
+    monkeypatch.setattr(sighting_helper, "SplunkAppConnectorHelper", lambda **kwargs: connector)
+    helper = FakeSplunkHelper(params)
+    sighting_helper.create_sighting(helper, event)
+    assert helper.logs["error"] == []
+    return connector
+
+
+def test_the_labels_of_the_result_field_join_the_labels_of_the_form(monkeypatch, alert_event):
+    """The default field is the one opencti_lookup returns, so the labels of
+    the indicator reach the sighting without any token."""
+    event = dict(alert_event, labels="c2\ncobalt-strike", __mv_labels="$c2$;$cobalt-strike$")
+    connector = run_create_sighting(monkeypatch, alert_params(), event)
+    assert sighting_labels_of(connector) == ["splunk", "c2", "cobalt-strike"]
+
+
+def test_a_label_given_twice_is_kept_once(monkeypatch, alert_event):
+    event = dict(alert_event, __mv_labels="$c2$;$splunk$")
+    connector = run_create_sighting(monkeypatch, alert_params(labels="splunk, c2"), event)
+    assert sighting_labels_of(connector) == ["splunk", "c2"]
+
+
+def test_an_empty_labels_field_adds_nothing(monkeypatch, alert_event):
+    event = dict(alert_event, __mv_labels="$c2$;$cobalt-strike$")
+    connector = run_create_sighting(monkeypatch, alert_params(labels_field=""), event)
+    assert sighting_labels_of(connector) == ["splunk"]
+
+
+def test_a_result_without_the_field_adds_nothing(monkeypatch, alert_event):
+    connector = run_create_sighting(monkeypatch, alert_params(), dict(alert_event))
+    assert sighting_labels_of(connector) == ["splunk"]
+
+
+def test_the_labels_field_can_be_another_field(monkeypatch, alert_event):
+    event = dict(alert_event, __mv_labels="$c2$", __mv_tags="$prod$;$dmz$", tags="prod\ndmz")
+    connector = run_create_sighting(monkeypatch, alert_params(labels="", labels_field="tags"), event)
+    assert sighting_labels_of(connector) == ["prod", "dmz"]
+
+
+def test_the_labels_field_also_reaches_a_built_indicator(monkeypatch, alert_event):
+    event = dict(alert_event, __mv_labels="$c2$")
+    params = alert_params(sighting_of_type="ipv4_indicator", sighting_of_value="198.51.100.7")
+    connector = run_create_sighting(monkeypatch, params, event)
+    bundle = json.loads([call for call in connector.calls if call[0] == "send"][0][1])
+    indicator = [o for o in bundle["objects"] if o["type"] == "indicator"][0]
+    assert indicator["labels"] == ["splunk", "c2"]

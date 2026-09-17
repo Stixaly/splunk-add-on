@@ -176,6 +176,7 @@ You can create an incident or an incident response case in OpenCTI from a custom
 | `Sighted indicator score` | Score given to the sighted indicator, 0 to 100 (default: unchanged)       | Sighting   | 
 | `Sighted indicator validity (days)` | Days the sighted indicator stays valid after the sighting (default: unchanged) | Sighting   | 
 | `Labels`                 | Labels (separated by a comma) to be applied                   | Sighting   | 
+| `Labels from field`      | Result field whose values are added to the labels (default: `labels`, the field of `opencti_lookup`) | Sighting   | 
 | `TLP`                    | Markings to be applied                                        | Sighting   | 
 
 The `Sighting Of (type)` setting decides whether the sighting is attached to an **indicator** or to an **observable** in OpenCTI:
@@ -189,6 +190,21 @@ The `Sighting Of (type)` setting decides whether the sighting is attached to an 
 Use one of the *Indicator* types to have the sighting counted on the IOC itself, which is what feeds the indicator decay and scoring in OpenCTI. The indicator id is derived the same way OpenCTI derives it, so the sighting attaches to the indicator that already exists on the platform instead of creating a duplicate.
 
 When the alert is driven by the `opencti_lookup` KV store, the cleanest option is `Indicator (OpenCTI id or STIX pattern)` with `Sighting Of (value)` set to the `id` field returned by the lookup, for example `$result.id$`.
+
+#### Labels of the matched indicator
+
+The labels of the sighting come from two places, merged without duplicates: the `Labels` field of
+the action, comma separated, and a field of the alert result named by `Labels from field`. That
+parameter defaults to `labels`, the field `opencti_lookup` returns, so an alert whose search keeps
+that field hands every label of the matched indicator to the sighting without any token:
+
+```
+| lookup opencti_lookup value as url_domain OUTPUT id as match_ioc_id, labels
+```
+
+Set `Labels from field` to another field to read that one instead, or empty it to add none. The
+labels also reach the indicator when the sighting builds it from a raw value. On an object OpenCTI
+already holds, the labels are added to the existing ones, none is removed.
 
 #### Count the matches instead of sending one sighting per match
 
@@ -205,7 +221,7 @@ Example of a search counting, per index, the matches of every indicator over the
 index=* earliest=-24h
 | lookup opencti_lookup value as url_domain OUTPUT id as match_ioc_id
 | search match_ioc_id=*
-| stats count min(_time) as first_seen max(_time) as last_seen by match_ioc_id, index
+| stats count min(_time) as first_seen max(_time) as last_seen values(labels) as labels by match_ioc_id, index
 ```
 
 with the "OpenCTI - Create Sighting" action configured as follows:

@@ -183,6 +183,49 @@ def parse_timestamp(value):
     return parsed
 
 
+def event_field_values(event, field):
+    """Read the values of a field of an alert result.
+
+    Splunk hands a multi-valued field to an alert action twice: the plain
+    column holds the values joined by a newline, and a __mv_<field> column
+    holds them as $value$;$value$, a literal dollar being doubled. The __mv_
+    column is the reliable one and is read first.
+
+    :param event: the alert result, as given by helper.get_events()
+    :param field: name of the field
+    :return: the list of values, empty when the field is absent or empty
+    """
+    if not field:
+        return []
+    encoded = event.get("__mv_" + field)
+    if encoded and encoded.startswith("$") and encoded.endswith("$"):
+        values = [part.replace("$$", "$") for part in encoded[1:-1].split("$;$")]
+    else:
+        plain = event.get(field)
+        if plain is None:
+            return []
+        if isinstance(plain, (list, tuple)):
+            values = [str(v) for v in plain]
+        else:
+            values = str(plain).split("\n")
+    return [value.strip() for value in values if value and value.strip()]
+
+
+def unique(values):
+    """The values without duplicates, in their first order of appearance.
+
+    :param values:
+    :return:
+    """
+    seen = set()
+    kept = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            kept.append(value)
+    return kept
+
+
 def generate_identity_id(name: str, identity_class: str):
     """
     :param name:
